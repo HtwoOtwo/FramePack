@@ -1,32 +1,60 @@
-from diffusers_helper.hf_login import login
 
 import os
 
 os.environ['HF_HOME'] = os.path.abspath(os.path.realpath(os.path.join(os.path.dirname(__file__), './hf_download')))
 
-import gradio as gr
-import torch
-import traceback
-import einops
-import safetensors.torch as sf
-import numpy as np
 import argparse
-import math
+import traceback
 
-from PIL import Image
+import einops
+import gradio as gr
+import numpy as np
+import torch
 from diffusers import AutoencoderKLHunyuanVideo
-from transformers import LlamaModel, CLIPTextModel, LlamaTokenizerFast, CLIPTokenizer
-from diffusers_helper.hunyuan import encode_prompt_conds, vae_decode, vae_encode, vae_decode_fake
-from diffusers_helper.utils import save_bcthw_as_mp4, crop_or_pad_yield_mask, soft_append_bcthw, resize_and_center_crop, state_dict_weighted_merge, state_dict_offset_merge, generate_timestamp
-from diffusers_helper.models.hunyuan_video_packed import HunyuanVideoTransformer3DModelPacked
-from diffusers_helper.pipelines.k_diffusion_hunyuan import sample_hunyuan
-from diffusers_helper.memory import cpu, gpu, get_cuda_free_memory_gb, move_model_to_device_with_memory_preservation, offload_model_from_device_for_memory_preservation, fake_diffusers_current_device, DynamicSwapInstaller, unload_complete_models, load_model_as_complete
-from diffusers_helper.thread_utils import AsyncStream, async_run
-from diffusers_helper.gradio.progress_bar import make_progress_bar_css, make_progress_bar_html
-from transformers import SiglipImageProcessor, SiglipVisionModel
-from diffusers_helper.clip_vision import hf_clip_vision_encode
-from diffusers_helper.bucket_tools import find_nearest_bucket
+from PIL import Image
+from transformers import (
+    CLIPTextModel,
+    CLIPTokenizer,
+    LlamaModel,
+    LlamaTokenizerFast,
+    SiglipImageProcessor,
+    SiglipVisionModel,
+)
 
+from diffusers_helper.bucket_tools import find_nearest_bucket
+from diffusers_helper.clip_vision import hf_clip_vision_encode
+from diffusers_helper.gradio.progress_bar import (
+    make_progress_bar_css,
+    make_progress_bar_html,
+)
+from diffusers_helper.hunyuan import (
+    encode_prompt_conds,
+    vae_decode,
+    vae_decode_fake,
+    vae_encode,
+)
+from diffusers_helper.memory import (
+    DynamicSwapInstaller,
+    fake_diffusers_current_device,
+    get_cuda_free_memory_gb,
+    gpu,
+    load_model_as_complete,
+    move_model_to_device_with_memory_preservation,
+    offload_model_from_device_for_memory_preservation,
+    unload_complete_models,
+)
+from diffusers_helper.models.hunyuan_video_packed import (
+    HunyuanVideoTransformer3DModelPacked,
+)
+from diffusers_helper.pipelines.k_diffusion_hunyuan import sample_hunyuan
+from diffusers_helper.thread_utils import AsyncStream, async_run
+from diffusers_helper.utils import (
+    crop_or_pad_yield_mask,
+    generate_timestamp,
+    resize_and_center_crop,
+    save_bcthw_as_mp4,
+    soft_append_bcthw,
+)
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--share', action='store_true')
@@ -46,16 +74,16 @@ high_vram = free_mem_gb > 60
 print(f'Free VRAM {free_mem_gb} GB')
 print(f'High-VRAM Mode: {high_vram}')
 
-text_encoder = LlamaModel.from_pretrained("hunyuanvideo-community/HunyuanVideo", subfolder='text_encoder', torch_dtype=torch.float16).cpu()
-text_encoder_2 = CLIPTextModel.from_pretrained("hunyuanvideo-community/HunyuanVideo", subfolder='text_encoder_2', torch_dtype=torch.float16).cpu()
-tokenizer = LlamaTokenizerFast.from_pretrained("hunyuanvideo-community/HunyuanVideo", subfolder='tokenizer')
-tokenizer_2 = CLIPTokenizer.from_pretrained("hunyuanvideo-community/HunyuanVideo", subfolder='tokenizer_2')
-vae = AutoencoderKLHunyuanVideo.from_pretrained("hunyuanvideo-community/HunyuanVideo", subfolder='vae', torch_dtype=torch.float16).cpu()
+text_encoder = LlamaModel.from_pretrained("/home/stardust/Downloads/a40rsync/hf_models/HunyuanVideo", subfolder='text_encoder', torch_dtype=torch.float16).cpu()
+text_encoder_2 = CLIPTextModel.from_pretrained("/home/stardust/Downloads/a40rsync/hf_models/HunyuanVideo", subfolder='text_encoder_2', torch_dtype=torch.float16).cpu()
+tokenizer = LlamaTokenizerFast.from_pretrained("/home/stardust/Downloads/a40rsync/hf_models/HunyuanVideo", subfolder='tokenizer')
+tokenizer_2 = CLIPTokenizer.from_pretrained("/home/stardust/Downloads/a40rsync/hf_models/HunyuanVideo", subfolder='tokenizer_2')
+vae = AutoencoderKLHunyuanVideo.from_pretrained("/home/stardust/Downloads/a40rsync/hf_models/HunyuanVideo", subfolder='vae', torch_dtype=torch.float16).cpu()
 
-feature_extractor = SiglipImageProcessor.from_pretrained("lllyasviel/flux_redux_bfl", subfolder='feature_extractor')
-image_encoder = SiglipVisionModel.from_pretrained("lllyasviel/flux_redux_bfl", subfolder='image_encoder', torch_dtype=torch.float16).cpu()
+feature_extractor = SiglipImageProcessor.from_pretrained("/home/stardust/Downloads/a40rsync/hf_models/flux_redux_bfl", subfolder='feature_extractor')
+image_encoder = SiglipVisionModel.from_pretrained("/home/stardust/Downloads/a40rsync/hf_models/flux_redux_bfl", subfolder='image_encoder', torch_dtype=torch.float16).cpu()
 
-transformer = HunyuanVideoTransformer3DModelPacked.from_pretrained('lllyasviel/FramePackI2V_HY', torch_dtype=torch.bfloat16).cpu()
+transformer = HunyuanVideoTransformer3DModelPacked.from_pretrained('/home/stardust/Downloads/a40rsync/hf_models/FramePackI2V_HY', torch_dtype=torch.bfloat16).cpu()
 
 vae.eval()
 text_encoder.eval()
@@ -100,7 +128,7 @@ os.makedirs(outputs_folder, exist_ok=True)
 
 
 @torch.no_grad()
-def worker(input_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf):
+def worker(input_image, mid_image, end_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf):
     total_latent_sections = (total_second_length * 30) / (latent_window_size * 4)
     total_latent_sections = int(max(round(total_latent_sections), 1))
 
@@ -135,7 +163,9 @@ def worker(input_image, prompt, n_prompt, seed, total_second_length, latent_wind
 
         # Processing input image
 
-        stream.output_queue.push(('progress', (None, '', make_progress_bar_html(0, 'Image processing ...'))))
+        # stream.output_queue.push(('progress', (None, '', make_progress_bar_html(0, 'Image processing ...'))))
+        stream.output_queue.push(('progress', (None, '', make_progress_bar_html(0, 'Processing start frame ...'))))
+
 
         H, W, C = input_image.shape
         height, width = find_nearest_bucket(H, W, resolution=640)
@@ -145,6 +175,31 @@ def worker(input_image, prompt, n_prompt, seed, total_second_length, latent_wind
 
         input_image_pt = torch.from_numpy(input_image_np).float() / 127.5 - 1
         input_image_pt = input_image_pt.permute(2, 0, 1)[None, :, None]
+        
+        # Processing end image (if provided)
+        has_end_image = end_image is not None
+        if has_end_image:
+            stream.output_queue.push(('progress', (None, '', make_progress_bar_html(0, 'Processing end frame ...'))))
+
+            H_end, W_end, C_end = end_image.shape
+            end_image_np = resize_and_center_crop(end_image, target_width=width, target_height=height)
+
+            Image.fromarray(end_image_np).save(os.path.join(outputs_folder, f'{job_id}_end.png'))
+
+            end_image_pt = torch.from_numpy(end_image_np).float() / 127.5 - 1
+            end_image_pt = end_image_pt.permute(2, 0, 1)[None, :, None]
+            
+        has_mid_image = mid_image is not None
+        if has_mid_image:
+            stream.output_queue.push(('progress', (None, '', make_progress_bar_html(0, 'Processing mid frame ...'))))
+
+            H_mid, W_mid, C_mid = mid_image.shape
+            mid_image_np = resize_and_center_crop(mid_image, target_width=width, target_height=height)
+
+            Image.fromarray(mid_image_np).save(os.path.join(outputs_folder, f'{job_id}_mid.png'))
+
+            mid_image_pt = torch.from_numpy(mid_image_np).float() / 127.5 - 1
+            mid_image_pt = mid_image_pt.permute(2, 0, 1)[None, :, None]
 
         # VAE encoding
 
@@ -154,6 +209,11 @@ def worker(input_image, prompt, n_prompt, seed, total_second_length, latent_wind
             load_model_as_complete(vae, target_device=gpu)
 
         start_latent = vae_encode(input_image_pt, vae)
+        
+        if has_end_image:
+            end_latent = vae_encode(end_image_pt, vae)
+        if has_mid_image:
+            mid_latent = vae_encode(mid_image_pt, vae)
 
         # CLIP Vision
 
@@ -164,6 +224,18 @@ def worker(input_image, prompt, n_prompt, seed, total_second_length, latent_wind
 
         image_encoder_output = hf_clip_vision_encode(input_image_np, feature_extractor, image_encoder)
         image_encoder_last_hidden_state = image_encoder_output.last_hidden_state
+        
+        # NOTE optional
+        if has_end_image:
+            end_image_encoder_output = hf_clip_vision_encode(end_image_np, feature_extractor, image_encoder)
+            end_image_encoder_last_hidden_state = end_image_encoder_output.last_hidden_state
+            # Combine both image embeddings or use a weighted approach
+            image_encoder_last_hidden_state = (image_encoder_last_hidden_state + end_image_encoder_last_hidden_state) / 2
+        if has_mid_image:
+            mid_image_encoder_output = hf_clip_vision_encode(mid_image_np, feature_extractor, image_encoder)
+            mid_image_encoder_last_hidden_state = mid_image_encoder_output.last_hidden_state
+            # Combine both image embeddings or use a weighted approach
+            image_encoder_last_hidden_state = (image_encoder_last_hidden_state + mid_image_encoder_last_hidden_state) / 2
 
         # Dtype
 
@@ -171,7 +243,7 @@ def worker(input_image, prompt, n_prompt, seed, total_second_length, latent_wind
         llama_vec_n = llama_vec_n.to(transformer.dtype)
         clip_l_pooler = clip_l_pooler.to(transformer.dtype)
         clip_l_pooler_n = clip_l_pooler_n.to(transformer.dtype)
-        image_encoder_last_hidden_state = image_encoder_last_hidden_state.to(transformer.dtype)
+        image_encoder_last_hidden_state = image_encoder_last_hidden_state.to(transformer.dtype) # NOTE
 
         # Sampling
 
@@ -180,11 +252,18 @@ def worker(input_image, prompt, n_prompt, seed, total_second_length, latent_wind
         rnd = torch.Generator("cpu").manual_seed(seed)
         num_frames = latent_window_size * 4 - 3
 
-        history_latents = torch.zeros(size=(1, 16, 1 + 2 + 16, height // 8, width // 8), dtype=torch.float32).cpu()
+        #NOTE x1的history latent有1份， x2的有2份，x4的有16份
+        #   ----------
+        #   |...|    |
+        #   ----- x1 |
+        #   | | |    |
+        #   ----------
+        history_latents = torch.zeros(size=(1, 16, 1 + 2 + 16, height // 8, width // 8), dtype=torch.float32).cpu() #NOTE B ? ? H/vae_scale_factor_spatial W/vae_scale_factor_spatial
         history_pixels = None
         total_generated_latent_frames = 0
 
-        latent_paddings = reversed(range(total_latent_sections))
+        # latent_paddings = reversed(range(total_latent_sections))
+        latent_paddings = list(reversed(range(total_latent_sections)))
 
         if total_latent_sections > 4:
             # In theory the latent_paddings should follow the above sequence, but it seems that duplicating some
@@ -193,15 +272,21 @@ def worker(input_image, prompt, n_prompt, seed, total_second_length, latent_wind
             # use `latent_paddings = list(reversed(range(total_latent_sections)))` to compare
             latent_paddings = [3] + [2] * (total_latent_sections - 3) + [1, 0]
 
-        for latent_padding in latent_paddings:
+        # 由于采用的是inverted anti-drifting采样（从后往前生成），为了生成准确的位置编码，必须为前面的位置预留index padding
+        # 第一轮采样latent_indices，clean_latents[2x-4x]，由于padding的存在都拥有较大的index，所以对应的hidden_states RoPE靠后，对应着视频后段 e.g.
+        # clean_latent_2x_rope_freqs = self.rope(frame_indices=clean_latent_2x_indices, height=H, width=W, device=clean_latents_2x.device)
+        for section, latent_padding in enumerate(latent_paddings):
             is_last_section = latent_padding == 0
+            is_first_section = latent_padding == latent_paddings[0]
+            is_mid_section = section == len(latent_paddings) // 2
             latent_padding_size = latent_padding * latent_window_size
 
             if stream.input_queue.top() == 'end':
                 stream.output_queue.push(('end', None))
                 return
 
-            print(f'latent_padding_size = {latent_padding_size}, is_last_section = {is_last_section}')
+            # print(f'latent_padding_size = {latent_padding_size}, is_last_section = {is_last_section}')
+            print(f'latent_padding_size = {latent_padding_size}, is_last_section = {is_last_section}, is_mid_section = {is_mid_section}, is_first_section = {is_first_section}')
 
             indices = torch.arange(0, sum([1, latent_padding_size, latent_window_size, 1, 2, 16])).unsqueeze(0)
             clean_latent_indices_pre, blank_indices, latent_indices, clean_latent_indices_post, clean_latent_2x_indices, clean_latent_4x_indices = indices.split([1, latent_padding_size, latent_window_size, 1, 2, 16], dim=1)
@@ -209,7 +294,16 @@ def worker(input_image, prompt, n_prompt, seed, total_second_length, latent_wind
 
             clean_latents_pre = start_latent.to(history_latents)
             clean_latents_post, clean_latents_2x, clean_latents_4x = history_latents[:, :, :1 + 2 + 16, :, :].split([1, 2, 16], dim=2)
-            clean_latents = torch.cat([clean_latents_pre, clean_latents_post], dim=2)
+            clean_latents = torch.cat([clean_latents_pre, clean_latents_post], dim=2) # NOTE 最重要的latent，永远会加上start_latent
+
+            # Use end image latent for the first section if provided
+            if has_mid_image and is_mid_section:
+                clean_latents_mid = mid_latent.to(history_latents) #NOTE concat the mid frame
+                clean_latents = torch.cat([clean_latents_pre, clean_latents_mid], dim=2)
+            if has_end_image and is_first_section:
+                clean_latents_end = end_latent.to(history_latents) #NOTE concat the end frame
+                clean_latents = torch.cat([clean_latents_pre, clean_latents_end], dim=2)
+                # clean_latents_2x[:,:,-1,...] = clean_latents_end[:,:,-1,...] #NOTE concat the end frame
 
             if not high_vram:
                 unload_complete_models()
@@ -272,8 +366,8 @@ def worker(input_image, prompt, n_prompt, seed, total_second_length, latent_wind
             if is_last_section:
                 generated_latents = torch.cat([start_latent.to(generated_latents), generated_latents], dim=2)
 
-            total_generated_latent_frames += int(generated_latents.shape[2])
-            history_latents = torch.cat([generated_latents.to(history_latents), history_latents], dim=2)
+            total_generated_latent_frames += int(generated_latents.shape[2]) #NOTE frames累加
+            history_latents = torch.cat([generated_latents.to(history_latents), history_latents], dim=2) #NOTE 生成的latent加到history_latents最前面（因为最重要，成为下一轮的x1的clean_latents）
 
             if not high_vram:
                 offload_model_from_device_for_memory_preservation(transformer, target_device=gpu, preserved_memory_gb=8)
@@ -315,7 +409,7 @@ def worker(input_image, prompt, n_prompt, seed, total_second_length, latent_wind
     return
 
 
-def process(input_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf):
+def process(input_image, mid_image, end_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf):
     global stream
     assert input_image is not None, 'No input image!'
 
@@ -323,7 +417,7 @@ def process(input_image, prompt, n_prompt, seed, total_second_length, latent_win
 
     stream = AsyncStream()
 
-    async_run(worker, input_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf)
+    async_run(worker, input_image, mid_image, end_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf)
 
     output_filename = None
 
@@ -360,7 +454,13 @@ with block:
     gr.Markdown('# FramePack')
     with gr.Row():
         with gr.Column():
-            input_image = gr.Image(sources='upload', type="numpy", label="Image", height=320)
+            with gr.Row():
+                with gr.Column():
+                    input_image = gr.Image(sources='upload', type="numpy", label="Start Frame", height=320)
+                with gr.Column():
+                    mid_image = gr.Image(sources='upload', type="numpy", label="Mid Frame (Optional)", height=320)
+                with gr.Column():
+                    end_image = gr.Image(sources='upload', type="numpy", label="End Frame (Optional)", height=320)
             prompt = gr.Textbox(label="Prompt", value='')
             example_quick_prompts = gr.Dataset(samples=quick_prompts, label='Quick List', samples_per_page=1000, components=[prompt])
             example_quick_prompts.click(lambda x: x[0], inputs=[example_quick_prompts], outputs=prompt, show_progress=False, queue=False)
@@ -396,7 +496,7 @@ with block:
 
     gr.HTML('<div style="text-align:center; margin-top:20px;">Share your results and find ideas at the <a href="https://x.com/search?q=framepack&f=live" target="_blank">FramePack Twitter (X) thread</a></div>')
 
-    ips = [input_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf]
+    ips = [input_image, mid_image, end_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf]
     start_button.click(fn=process, inputs=ips, outputs=[result_video, preview_image, progress_desc, progress_bar, start_button, end_button])
     end_button.click(fn=end_process)
 
